@@ -1,0 +1,23 @@
+---
+aws_ec2::instance_type: 't2.micro'
+aws_ec2::key_name: 'my_key_name'
+#aws_ec2::proxy_url: 'http://myproxy.mycompany.com:8080'
+aws_ec2::vpc_id: 'my_vpc_name'
+
+# global trusted facts
+aws_ec2::app_environment: 'test'
+aws_ec2::cloudplatform: 'Amazon Web Services'
+aws_ec2::provisioner: 'Puppet'
+
+# drive sizes for PE 2016.2.x servers (GB)
+# recommendations: https://docs.puppetlabs.com/pe/latest/install_system_requirements.html#hardware-recommendations
+aws_ec2::pe_block_devices:
+  - device_name: '/dev/sda1'
+    volume_size: 20
+    volume_type: 'gp2'
+aws_ec2::pe_instance_type: 'm4.large'
+aws_ec2::pe_mono_opt: 100
+aws_ec2::pe_mono_var: 42
+aws_ec2::pe_password: 'password'
+aws_ec2::pe_r10k_remote: 'https://github.com/puppetlabs/control-repo/control-repo.git'
+aws_ec2::pe_version: '2016.2.1'

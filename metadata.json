@@ -1,0 +1,16 @@
+{
+  "name": "aharden-aws_ec2",
+  "version": "0.1.0",
+  "author": "aharden",
+  "summary": "Deploy PE servers and agents with trusted facts on AWS EC2.",
+  "license": "Apache-2.0",
+  "source": "https://github.com/aharden/aharden-aws_ec2",
+  "project_page": "https://github.com/aharden/aharden-aws_ec2",
+  "issues_url": "https://github.com/aharden/aharden-aws_ec2/issues",
+  "dependencies": [
+    {"name":"puppetlabs-stdlib","version_requirement":">= 1.0.0"},
+    {"name":"puppetlabs-aws","version_requirement":">= 1.4.0"}
+  ],
+  "data_provider": "hiera"
+}
+

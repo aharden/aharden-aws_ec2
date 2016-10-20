@@ -1,0 +1,145 @@
+#!/bin/bash
+# reference: https://github.com/puppetlabs/puppetlabs-aws/blob/master/examples/puppet-enterprise/templates/master-pe-userdata.erb
+# Added proxy support
+
+PUPPET_PE_CONSOLEPWD='<%= @pe_password %>'
+PE_HOSTNAME='<%= @nodename %>'
+<%- if @proxy_url -%>
+PROXY_URL='<%= @proxy_url %>'
+<%- end -%>
+PUPPET_PE_VERSION='<%= @pe_version %>'
+RESULTS_FILE='/tmp/puppet_bootstrap_output'
+S3_BASE='https://s3.amazonaws.com/pe-builds/released/'
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games"
+
+function check_exit_status() {
+  if [ ! -f $RESULTS_FILE ]; then
+    echo '1' > $RESULTS_FILE
+  fi
+}
+
+trap check_exit_status INT TERM EXIT
+
+function write_masterconf() {
+  cat > /opt/pe.conf << CONF
+"console_admin_password": "$PUPPET_PE_CONSOLEPWD"
+"puppet_enterprise::puppet_master_host": "$INTERNAL_HOSTNAME"
+"pe_install::puppet_master_dnsaltnames": ["puppet","$SHORT_HOSTNAME","$PE_HOSTNAME"]
+CONF
+}
+
+# Dynamic DNS registration (tested on Debian/Ubuntu)
+function ddns_register_host() {
+  echo "
+  update delete $PE_HOSTNAME. CNAME
+  send
+  update delete $INTERNAL_HOSTNAME A
+  send
+  update delete $REVERSE_IP.in-addr.arpa PTR
+  send
+  update add $INTERNAL_HOSTNAME 86400 A $IP_ADDRESS
+  send
+  update add $REVERSE_IP.in-addr.arpa 14400 PTR $INTERNAL_HOSTNAME.
+  send
+  update add $PE_HOSTNAME. 600 CNAME $INTERNAL_HOSTNAME.
+  send" | nsupdate
+}
+
+function install_puppetmaster() {
+  if [ ! -d /opt/puppet-enterprise ]; then
+    mkdir -p /opt/puppet-enterprise
+  fi
+  if [ ! -f /opt/puppet-enterprise/puppet-enterprise-installer ]; then
+    ntpdate -u 0.north-america.pool.ntp.org
+<%- if @proxy_url -%>
+    curl -L -s -x $PROXY_URL -o /opt/pe-installer.tar.gz "https://s3.amazonaws.com/pe-builds/released/$PUPPET_PE_VERSION/puppet-enterprise-$PUPPET_PE_VERSION-ubuntu-14.04-amd64.tar.gz"
+<%- else -%>
+    curl -L -s -o /opt/pe-installer.tar.gz "https://s3.amazonaws.com/pe-builds/released/$PUPPET_PE_VERSION/puppet-enterprise-$PUPPET_PE_VERSION-ubuntu-14.04-amd64.tar.gz"
+<%- end -%>
+    #Drop installer in predictable location
+    tar --extract --file=/opt/pe-installer.tar.gz --strip-components=1 --directory=/opt/puppet-enterprise
+  fi
+  write_masterconf
+  /opt/puppet-enterprise/puppet-enterprise-installer -c /opt/pe.conf
+}
+
+function format_disks() {
+  # mount /opt/ and /var/ to separate EBS vols
+  #attach the EBS to /dev/sdb & /dev/sdc before running it
+  #format EBS
+  mkfs -t ext4 /dev/xvdb
+  mkfs -t ext4 /dev/xvdc
+
+  #copy original /var to /dev/xvdf
+  mkdir /mnt/new
+  mount /dev/xvdc /mnt/new
+  cd /var
+  cp -ax * /mnt/new
+  cd /
+  mv var var.old
+
+  #mount EBS B as new /opt
+  mount /dev/xvdb /opt
+
+  #mount EBS as new /var
+  umount /dev/xvdc
+  mkdir /var
+  mount /dev/xvdc /var
+
+  #update fstab file to mount EBS on system startup
+  echo "/dev/xvdb /opt ext4 noatime 0 0" >> /etc/fstab
+  echo "/dev/xvdc /var ext4 noatime 0 0" >> /etc/fstab
+}
+
+function provision_puppet() {
+  if [ -f /etc/redhat-release ]; then
+    export breed='redhat'
+    setenforce 0
+  elif [ -f /etc/debian_version ]; then
+    export breed='debian'
+<%- if @proxy_url -%>   
+    cat > /etc/apt/apt.conf << APTCONF
+Acquire::http::Proxy "<%= @proxy_url %>";
+APTCONF
+<%- end -%>
+  else
+    echo "This OS is not supported"
+    exit 1
+  fi
+
+  MD="http://169.254.169.254/latest/meta-data/"
+  IP_ADDRESS=$(curl -fs $MD/local-ipv4)
+  # Reverse IP recipe from http://ubuntuforums.org/showthread.php?t=1554177
+  REVERSE_IP=$(echo $IP_ADDRESS|awk -F"." '{for(i=NF;i>0;i--) printf i!=1?$i".":"%s",$i}')
+  INTERNAL_HOSTNAME=$(curl -fs $MD/hostname)
+  SHORT_HOSTNAME=$(hostname)
+
+  ddns_register_host
+
+  format_disks
+
+  ## Add host entries for each system
+  cat > /etc/hosts <<EOH
+127.0.0.1 localhost localhost.localdomain localhost4 localhost4.localdomain
+::1 localhost localhost.localdomain localhost6 localhost6.localdomain
+$IP_ADDRESS $INTERNAL_HOSTNAME $SHORT_HOSTNAME $PE_HOSTNAME puppet
+EOH
+
+<%- if @proxy_url -%>
+  cat > /root/.curlrc << CURLRC
+proxy=<%= @proxy_url %>
+noproxy=169.254.169.254,localhost,tycoelectronics.com,tycoelectronics.net,127.0.0.1
+CURLRC
+<%- end -%>
+  install_puppetmaster
+
+  echo "*" > /etc/puppetlabs/puppet/autosign.conf
+
+  /opt/puppetlabs/bin/puppet agent --onetime --no-daemonize --color=false --verbose
+
+  echo $? > $RESULTS_FILE
+  echo "Puppet installation finished!"
+  exit 0
+}
+
+provision_puppet

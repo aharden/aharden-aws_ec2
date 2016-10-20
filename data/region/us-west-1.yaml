@@ -1,0 +1,8 @@
+---
+aws_ec2::amazonlinux: 'ami-31490d51'
+aws_ec2::github_enterprise: 'ami-3cdc1f51' # GHE 2.6.4
+aws_ec2::ubuntu1404: 'ami-06116566'
+aws_ec2::ubuntu1604: 'ami-b20542d2'
+aws_ec2::windows2012r2: 'ami-cface9af'
+aws_ec2::windows2012: 'ami-59aeeb39'
+aws_ec2::windows2008r2: 'ami-c5a9eca5'

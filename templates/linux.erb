@@ -1,0 +1,143 @@
+#!/bin/bash
+# based on https://github.com/mrzarquon/puppet-tse_awsnodes/blob/master/templates/linux.erb
+# ERB generated userdata script
+
+PE_MASTER='<%= @pe_master_hostname %>'
+MD="http://169.254.169.254/latest/meta-data/"
+IP_ADDRESS=$(curl -fs $MD/local-ipv4)
+# Reverse IP recipe from http://ubuntuforums.org/showthread.php?t=1554177
+REVERSE_IP=$(echo $IP_ADDRESS|awk -F"." '{for(i=NF;i>0;i--) printf i!=1?$i".":"%s",$i}')
+AWS_INSTANCE_ID=$(curl -fs $MD/instance-id)
+INTERNAL_HOSTNAME=$(curl -fs $MD/hostname)
+AVAILABILITY_ZONE=$(curl -fs $MD/placement/availability-zone)
+EC2_REGION=${AVAILABILITY_ZONE::-1}
+
+<%- if @nodename -%>
+# since we were passed @nodename we are using it as certname
+PE_CERTNAME="<%= @nodename %>"
+
+<%- else -%>
+PE_CERTNAME="${INTERNAL_HOSTNAME}"
+
+<%- end -%>
+# these are attributes we know already
+PP_INSTANCE_ID="${AWS_INSTANCE_ID}"
+
+<%- if @pp_image_name -%>
+PP_IMAGE_NAME='<%= @pp_image_name %>'
+<%- else -%>
+PP_IMAGE_NAME=$(curl -s http://169.254.169.254/latest/meta-data/ami-id)
+<%- end -%>
+
+<%-# these are all the OIDs that we may map or already have -%>
+<%-# https://docs.puppetlabs.com/puppet/latest/reference/ssl_attributes_extensions.html -%>
+function write_csr_attributes () {
+  if [ ! -d /etc/puppetlabs/puppet ]; then
+    mkdir -p /etc/puppetlabs/puppet
+  fi
+
+  cat > /etc/puppetlabs/puppet/csr_attributes.yaml << YAML
+extension_requests:
+  pp_instance_id: $PP_INSTANCE_ID
+  pp_image_name: $PP_IMAGE_NAME
+  1.3.6.1.4.1.34380.1.1.18: $EC2_REGION
+  1.3.6.1.4.1.34380.1.1.20: $AVAILABILITY_ZONE
+<%- if @pp_uuid -%>
+  pp_uuid: '<%= @pp_uuid %>'
+<%- end -%>
+<%- if @pp_preshared_key -%>
+  pp_preshared_key: '<%= @pp_preshared_key %>'
+<%- end -%>
+<%- if @pp_cost_center -%>
+  1.3.6.1.4.1.34380.1.1.5: '<%= @pp_cost_center %>'
+<%- end -%>
+<%- if @pp_product -%>
+  1.3.6.1.4.1.34380.1.1.6: '<%= @pp_product %>'
+<%- end -%>
+<%- if @pp_project -%>
+  1.3.6.1.4.1.34380.1.1.7: '<%= @pp_project %>'
+<%- end -%>
+<%- if @pp_application -%>
+  1.3.6.1.4.1.34380.1.1.8: '<%= @pp_application %>'
+<%- end -%>
+<%- if @pp_service -%>
+  1.3.6.1.4.1.34380.1.1.9: '<%= @pp_service %>'
+<%- end -%>
+<%- if @pp_employee -%>
+  1.3.6.1.4.1.34380.1.1.10: '<%= @pp_employee %>'
+<%- end -%>
+<%- if @pp_created_by -%>
+  1.3.6.1.4.1.34380.1.1.11: '<%= @pp_created_by %>'
+<%- end -%>
+<%- if @pp_environment -%>
+  1.3.6.1.4.1.34380.1.1.12: '<%= @pp_environment %>'
+<%- end -%>
+<%- if @pp_role -%>
+  1.3.6.1.4.1.34380.1.1.13: '<%= @pp_role %>'
+<%- end -%>
+<%- if @pp_software_version -%>
+  1.3.6.1.4.1.34380.1.1.14: '<%= @pp_software_version %>'
+<%- end -%>
+<%- if @pp_department -%>
+  1.3.6.1.4.1.34380.1.1.15: '<%= @pp_department %>'
+<%- end -%>
+<%- if @pp_cluster -%>
+  1.3.6.1.4.1.34380.1.1.16: '<%= @pp_cluster %>'
+<%- end -%>
+<%- if @pp_provisioner -%>
+  1.3.6.1.4.1.34380.1.1.17: '<%= @pp_provisioner %>'
+<%- end -%>
+<%- if @pp_datacenter -%>
+  1.3.6.1.4.1.34380.1.1.19: '<%= @pp_datacenter %>'
+<%- end -%>
+<%- if @pp_network -%>
+  1.3.6.1.4.1.34380.1.1.21: '<%= @pp_network %>'
+<%- end -%>
+<%- if @pp_securitypolicy -%>
+  1.3.6.1.4.1.34380.1.1.22: '<%= @pp_securitypolicy %>'
+<%- end -%>
+<%- if @pp_cloudplatform -%>
+  1.3.6.1.4.1.34380.1.1.23: '<%= @pp_cloudplatform %>'
+<%- end -%>
+<%- if @pp_apptier -%>
+  1.3.6.1.4.1.34380.1.1.24: '<%= @pp_apptier %>'
+<%- end -%>
+<%- if @pp_hostname -%>
+  1.3.6.1.4.1.34380.1.1.25: '<%= @pp_hostname %>'
+<%- end -%>
+YAML
+}
+
+function install_pe_agent () {
+  /usr/bin/curl -sk https://$PE_MASTER:8140/packages/current/install.bash | /bin/bash -s agent:certname=$PE_CERTNAME
+}
+
+function post_pe_agent_install () {
+  /opt/puppetlabs/bin/puppet agent -t
+}
+
+# Dynamic DNS registration (tested on Debian/Ubuntu)
+function ddns_register_host() {
+  echo "
+<%- if @nodename -%>
+  update delete <%= @nodename %>. CNAME
+  send
+<%- end -%>
+  update delete $INTERNAL_HOSTNAME A
+  send
+  update delete $REVERSE_IP.in-addr.arpa PTR
+  send
+  update add $INTERNAL_HOSTNAME 86400 A $IP_ADDRESS
+  send
+  update add $REVERSE_IP.in-addr.arpa 14400 PTR $INTERNAL_HOSTNAME.
+<%- if @nodename -%>
+  send
+  update add <%= @nodename %>. 600 CNAME $INTERNAL_HOSTNAME.
+<%- end -%>
+  send" | nsupdate
+}
+
+ddns_register_host
+write_csr_attributes
+install_pe_agent
+post_pe_agent_install
